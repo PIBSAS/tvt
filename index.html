@@ -45,6 +45,47 @@ video {
     right:20px;
     z-index:10000;
     pointer-events:auto;
+
+    padding:12px 18px;
+    font-size:16px;
+    border:none;
+    border-radius:8px;
+    background:#1e90ff;
+    color:white;
+    font-weight:bold;
+    cursor:pointer;
+
+    box-shadow:0 4px 12px rgba(0,0,0,0.4);
+}
+
+#urlInput {
+    position:absolute;
+    top:70px;
+    right:20px;
+    z-index:10000;
+
+    width:220px;
+    padding:10px;
+    border-radius:8px;
+    border:none;
+    outline:none;
+
+    background:rgba(0,0,0,0.7);
+    color:white;
+}
+
+#loadUrlBtn {
+    position:absolute;
+    top:110px;
+    right:20px;
+    z-index:10000;
+
+    padding:10px 14px;
+    border:none;
+    border-radius:8px;
+    background:#28a745;
+    color:white;
+    cursor:pointer;
 }
 
 #list {
@@ -81,6 +122,18 @@ video {
 <button id="loadBtn">Cargar lista</button>
 <input type="file" id="fileInput" accept=".m3u" hidden>
 
+<input type="text" id="urlInput" placeholder="Pegar URL M3U..." />
+
+<button id="loadUrlBtn">Cargar URL</button>
+<select id="urlHistory" style="
+    position:absolute;
+    top:150px;
+    right:20px;
+    z-index:10000;
+    width:220px;
+    display:none;
+"></select>
+
 <video id="videoA" muted playsinline></video>
 <video id="videoB" muted playsinline style="display:none"></video>
 
@@ -93,33 +146,63 @@ video {
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <script>
 
-// DOM
 const videoA = document.getElementById("videoA");
 const videoB = document.getElementById("videoB");
 
 const loadBtn = document.getElementById("loadBtn");
 const fileInput = document.getElementById("fileInput");
+
+const urlInput = document.getElementById("urlInput");
+const loadUrlBtn = document.getElementById("loadUrlBtn");
+const urlHistory = document.getElementById("urlHistory");
+
+urlInput.value = localStorage.getItem("lastUrl") || "";
+
 const overlay = document.getElementById("overlay");
 const list = document.getElementById("list");
 const logo = document.getElementById("logo");
 
-// videos
 let activeVideo = videoA;
 let standbyVideo = videoB;
 
 let hlsActive = null;
 let hlsPreload = null;
 
-// data
 let channels = [];
 let current = 0;
 let preloadIndex = null;
 
-// control
 let direction = 1;
 let triedChannels = new Set();
 
-// botón cargar
+function saveUrlHistory(url){
+    let history = JSON.parse(localStorage.getItem("urlHistory") || "[]");
+
+    history = history.filter(u => u !== url);
+    history.unshift(url);
+    history = history.slice(0,5);
+
+    localStorage.setItem("urlHistory", JSON.stringify(history));
+}
+
+function loadUrlHistory(){
+    let history = JSON.parse(localStorage.getItem("urlHistory") || "[]");
+
+    if(history.length){
+        urlHistory.style.display = "block";
+
+        urlHistory.innerHTML = history
+            .map(u => `<option value="${u}">${u}</option>`)
+            .join("");
+    }
+}
+
+urlHistory.onchange = () => {
+    urlInput.value = urlHistory.value;
+};
+
+loadUrlHistory();
+
 loadBtn.onclick = () => fileInput.click();
 
 fileInput.onchange = e => {
@@ -135,6 +218,10 @@ fileInput.onchange = e => {
 
         buildList();
         loadBtn.style.display = "none";
+        urlInput.style.display = "none";
+        loadUrlBtn.style.display = "none";
+        urlHistory.style.display = "none";
+        
         overlay.innerText = "";
 
         let saved = localStorage.getItem("lastChannel");
@@ -145,7 +232,45 @@ fileInput.onchange = e => {
     reader.readAsText(file);
 };
 
-// parse M3U
+loadUrlBtn.onclick = async () => {
+    let url = urlInput.value.trim();
+    if(!url) return alert("Pegá una URL");
+
+    try{
+        overlay.innerText = "Cargando lista...";
+
+        let res = await fetch(url);
+        let text = await res.text();
+
+        channels = [];
+        parseM3U(text);
+
+        if(!channels.length) return alert("Lista vacía");
+
+        localStorage.setItem("lastUrl", url);
+        
+        saveUrlHistory(url);
+        
+        buildList();
+        
+        loadBtn.style.display = "none";
+        urlInput.style.display = "none";
+        loadUrlBtn.style.display = "none";
+        urlHistory.style.display = "none";
+        
+        overlay.innerText = "";
+
+        let saved = localStorage.getItem("lastChannel");
+        if(saved !== null) current = parseInt(saved);
+
+        loadChannel(current);
+
+    } catch(e){
+        alert("Error cargando URL");
+        console.error(e);
+    }
+};
+
 function parseM3U(txt){
     let lines = txt.split("\n");
     for(let i=0;i<lines.length;i++){
@@ -161,7 +286,6 @@ function parseM3U(txt){
     }
 }
 
-// lista
 function buildList(){
     list.innerHTML = "";
     channels.forEach((ch,i)=>{
@@ -178,7 +302,6 @@ function buildList(){
     });
 }
 
-// PRELOAD REAL (🔥 clave)
 function preloadChannel(index){
     if(index < 0) index = channels.length - 1;
     if(index >= channels.length) index = 0;
@@ -199,12 +322,10 @@ function preloadChannel(index){
     hlsPreload.attachMedia(standbyVideo);
 
     standbyVideo.muted = true;
-    standbyVideo.play().catch(()=>{}); // 🔥 ESTO HACE LA MAGIA
+    standbyVideo.play().catch(()=>{});
 
-    console.log("⚡ Precargando:", ch.name);
 }
 
-// LOAD rápido
 function loadChannel(index){
     if(index < 0) index = channels.length - 1;
     if(index >= channels.length) index = 0;
@@ -216,9 +337,7 @@ function loadChannel(index){
     overlay.innerText = ch.name;
     updateUI();
 
-    // USAR PRELOAD
     if(preloadIndex === index && hlsPreload){
-        console.log("🚀 usando precarga");
 
         if(hlsActive) hlsActive.destroy();
 
@@ -235,7 +354,7 @@ function loadChannel(index){
         return;
     }
 
-    // NORMAL
+
     if(hlsActive) hlsActive.destroy();
 
     hlsActive = new Hls({
@@ -258,12 +377,11 @@ function loadChannel(index){
     });
 }
 
-// FAILOVER
 function failover(){
     triedChannels.add(current);
 
     if(triedChannels.size >= channels.length){
-        console.warn("Sin señal");
+
         return;
     }
 
@@ -278,14 +396,12 @@ function failover(){
     loadChannel(next);
 }
 
-// swap
 function swapVideos(){
     activeVideo.style.display = "none";
     standbyVideo.style.display = "block";
     [activeVideo, standbyVideo] = [standbyVideo, activeVideo];
 }
 
-// UI
 function updateUI(){
     let ch = channels[current];
 
@@ -299,11 +415,149 @@ function updateUI(){
     });
 }
 
-// teclado
+function showList(){
+    list.style.display = "block";
+}
+
+function hideList(){
+    list.style.display = "none";
+}
+
 document.addEventListener("keydown", e=>{
     if(e.key==="ArrowUp"){ direction=-1; loadChannel(current-1); }
     if(e.key==="ArrowDown"){ direction=1; loadChannel(current+1); }
+    
+    if(e.key==="ArrowRight"){
+        hideList();
+    }
+
+    if(e.key==="ArrowLeft"){
+        showList();
+    }
+    
+    if(e.key==="f") toggleFullscreen();
+    if(e.key==="Escape") document.exitFullscreen();
 });
+
+let startX = 0;
+let startY = 0;
+
+let isVolumeGesture = false;
+let isChannelGesture = false;
+
+let startVolume = 1;
+
+
+document.addEventListener("touchstart", e=>{
+    const touch = e.touches[0];
+
+    startX = touch.clientX;
+    startY = touch.clientY;
+
+    if(startX < window.innerWidth * 0.6){
+        isVolumeGesture = true;
+        isChannelGesture = false;
+        startVolume = activeVideo.volume;
+    }
+    
+    else if(startX > window.innerWidth * 0.4){
+        isChannelGesture = true;
+        isVolumeGesture = false;
+    } 
+    else {
+        isVolumeGesture = false;
+        isChannelGesture = false;
+    }
+});
+
+document.addEventListener("touchmove", e=>{
+    if(isVolumeGesture || isChannelGesture){
+        e.preventDefault();
+    }
+    
+    const touch = e.touches[0];
+
+    let dx = touch.clientX - startX;
+    let dy = touch.clientY - startY;
+
+    if(isVolumeGesture){
+        let delta = startY - touch.clientY;
+        let change = delta / 300;
+
+        let newVolume = startVolume + change;
+        newVolume = Math.max(0, Math.min(1, newVolume));
+
+        activeVideo.volume = newVolume;
+        showVolume(newVolume);
+    }
+
+    if(isChannelGesture){
+        if(Math.abs(dy) > 60 && Math.abs(dy) > Math.abs(dx)){
+            
+            if(dy < 0){
+                direction = 1;
+                loadChannel(current + 1);
+            } else {
+                direction = -1;
+                loadChannel(current - 1);
+            }
+
+            isChannelGesture = false;
+        }
+    }
+});
+
+let lastTap = 0;
+
+document.addEventListener("touchend", e=>{
+    const touch = e.changedTouches[0];
+
+    let dx = touch.clientX - startX;
+    let dy = touch.clientY - startY;
+
+    let now = Date.now();
+
+    if(Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)){
+        if(dx < 0){
+            hideList();
+        } else {
+            showList();
+        }
+    }
+
+    if(Math.abs(dx) < 10 && Math.abs(dy) < 10){
+        if(now - lastTap < 300){
+            toggleFullscreen();
+        }
+        lastTap = now;
+    }
+
+    isVolumeGesture = false;
+    isChannelGesture = false;
+});
+
+function toggleFullscreen(){
+    if(!document.fullscreenElement){
+        const el = document.documentElement;
+
+        if(el.requestFullscreen) el.requestFullscreen();
+        else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    } else {
+        if(document.exitFullscreen) document.exitFullscreen();
+        else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
+    }
+}
+
+let volTimer;
+
+function showVolume(vol){
+    overlay.innerText = "Vol: " + Math.round(vol * 100) + "%";
+
+    clearTimeout(volTimer);
+    volTimer = setTimeout(()=>{
+        overlay.innerText = channels[current].name;
+    }, 1000);
+}
 
 </script>
 
