@@ -14,7 +14,6 @@ video {
     object-fit:cover;
 }
 
-/* UI */
 #ui {
     position:fixed;
     inset:0;
@@ -40,7 +39,6 @@ video {
     height:50px;
 }
 
-/* botón */
 #loadBtn {
     position:absolute;
     top:20px;
@@ -49,7 +47,6 @@ video {
     pointer-events:auto;
 }
 
-/* lista lateral */
 #list {
     position:absolute;
     right:0;
@@ -58,13 +55,7 @@ video {
     height:100%;
     background:rgba(0,0,0,0.8);
     overflow-y:auto;
-    transform:translateX(0);
-    transition:0.3s;
     pointer-events:auto;
-}
-
-#list.hidden {
-    transform:translateX(100%);
 }
 
 .channel {
@@ -101,6 +92,7 @@ video {
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <script>
+
 // DOM
 const videoA = document.getElementById("videoA");
 const videoB = document.getElementById("videoB");
@@ -111,7 +103,7 @@ const overlay = document.getElementById("overlay");
 const list = document.getElementById("list");
 const logo = document.getElementById("logo");
 
-// videos activos
+// videos
 let activeVideo = videoA;
 let standbyVideo = videoB;
 
@@ -123,12 +115,11 @@ let channels = [];
 let current = 0;
 let preloadIndex = null;
 
-// memoria
-let hasPlayed = false;
+// control
 let direction = 1;
 let triedChannels = new Set();
 
-// botón cargar lista
+// botón cargar
 loadBtn.onclick = () => fileInput.click();
 
 fileInput.onchange = e => {
@@ -170,7 +161,7 @@ function parseM3U(txt){
     }
 }
 
-// construir lista de logos
+// lista
 function buildList(){
     list.innerHTML = "";
     channels.forEach((ch,i)=>{
@@ -187,33 +178,34 @@ function buildList(){
     });
 }
 
-// precarga canal
+// PRELOAD REAL (🔥 clave)
 function preloadChannel(index){
     if(index < 0) index = channels.length - 1;
     if(index >= channels.length) index = 0;
-    
+
     if(preloadIndex === index) return;
     preloadIndex = index;
-    
+
     if(hlsPreload) hlsPreload.destroy();
 
     let ch = channels[index];
-    
+
     hlsPreload = new Hls({
-        maxBufferLength: 10,
-        maxMaxBufferLength: 20
+        maxBufferLength: 5,
+        maxMaxBufferLength: 10
     });
-    
+
     hlsPreload.loadSource(ch.url);
     hlsPreload.attachMedia(standbyVideo);
-    
+
     standbyVideo.muted = true;
-    
+    standbyVideo.play().catch(()=>{}); // 🔥 ESTO HACE LA MAGIA
+
     console.log("⚡ Precargando:", ch.name);
 }
 
-// cargar canal
-function loadChannel(index, isUser=false){ 
+// LOAD rápido
+function loadChannel(index){
     if(index < 0) index = channels.length - 1;
     if(index >= channels.length) index = 0;
 
@@ -221,133 +213,98 @@ function loadChannel(index, isUser=false){
     localStorage.setItem("lastChannel", current);
 
     let ch = channels[index];
+    overlay.innerText = ch.name;
     updateUI();
 
-    // usar precarga si ya estaba cargado
+    // USAR PRELOAD
     if(preloadIndex === index && hlsPreload){
         console.log("🚀 usando precarga");
-        
+
         if(hlsActive) hlsActive.destroy();
-        
+
         hlsActive = hlsPreload;
         hlsPreload = null;
         preloadIndex = null;
-        
+
         swapVideos();
-        
+
         activeVideo.muted = false;
         activeVideo.play().catch(()=>{});
-        
-        // precargar siguiente
+
         preloadChannel(current + direction);
         return;
     }
 
+    // NORMAL
     if(hlsActive) hlsActive.destroy();
-    
+
     hlsActive = new Hls({
-        maxBufferLength: 10,
-        maxMaxBufferLength: 20 
+        maxBufferLength: 5,
+        maxMaxBufferLength: 10
     });
-    
+
     hlsActive.loadSource(ch.url);
     hlsActive.attachMedia(activeVideo);
 
     hlsActive.on(Hls.Events.MANIFEST_PARSED, ()=>{
-        
         activeVideo.muted = false;
         activeVideo.play().catch(()=>{});
-            
-        // precargar siguiente
+
         preloadChannel(current + direction);
     });
 
     hlsActive.on(Hls.Events.ERROR,(event,data)=>{
-        if(data.fatal){
-            failover();
-        }
+        if(data.fatal) failover();
     });
 }
 
-// failover
+// FAILOVER
 function failover(){
-    if(hasPlayed) return;
-
     triedChannels.add(current);
-    
+
     if(triedChannels.size >= channels.length){
-        console.warn("Todos los canales fallaron");
+        console.warn("Sin señal");
         return;
     }
 
     let next = current;
-    
+
     do{
         next += direction;
-        
         if(next < 0) next = channels.length - 1;
         if(next >= channels.length) next = 0;
-        
     } while(triedChannels.has(next));
 
-    loadChannel(next,false);
+    loadChannel(next);
 }
 
-// swap videos
+// swap
 function swapVideos(){
     activeVideo.style.display = "none";
     standbyVideo.style.display = "block";
-
     [activeVideo, standbyVideo] = [standbyVideo, activeVideo];
 }
 
-// actualizar UI
+// UI
 function updateUI(){
     let ch = channels[current];
+
     if(ch.logo){
         logo.src = ch.logo;
         logo.style.display = "block";
     }
+
     document.querySelectorAll(".channel").forEach((el,i)=>{
         el.classList.toggle("active",i===current);
     });
 }
 
-// controles teclado
+// teclado
 document.addEventListener("keydown", e=>{
-    if(e.key==="ArrowUp"){ direction=-1; loadChannel(current-1,true); }
-    if(e.key==="ArrowDown"){ direction=1; loadChannel(current+1,true); }
-    if(e.key==="ArrowLeft") list.classList.remove("hidden");
-    if(e.key==="ArrowRight") list.classList.add("hidden");
-    if(e.key==="f") toggleFullscreen();
+    if(e.key==="ArrowUp"){ direction=-1; loadChannel(current-1); }
+    if(e.key==="ArrowDown"){ direction=1; loadChannel(current+1); }
 });
 
-// fullscreen
-function toggleFullscreen(){
-    if(!document.fullscreenElement) document.documentElement.requestFullscreen();
-    else document.exitFullscreen();
-}
-document.addEventListener("dblclick",toggleFullscreen);
-
-// gestos táctiles
-let startX=0, startY=0;
-document.addEventListener("touchstart",e=>{
-    startX = e.touches[0].clientX;
-    startY = e.touches[0].clientY;
-});
-document.addEventListener("touchend",e=>{
-    let dx = e.changedTouches[0].clientX - startX;
-    let dy = e.changedTouches[0].clientY - startY;
-
-    if(Math.abs(dy) > 50 && Math.abs(dy) > Math.abs(dx)){
-        if(dy < 0){ direction=1; loadChannel(current+1,true); }
-        else { direction=-1; loadChannel(current-1,true); }
-    }
-    if(Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)){
-        if(dx < 0) list.classList.add("hidden");
-        else list.classList.remove("hidden");
-    }
-});
 </script>
 
 </body>
