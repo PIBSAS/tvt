@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>IPTV Player PRO</title>
+
+<style>
+body { margin:0; background:black; overflow:hidden; }
+
+video {
+    position:absolute;
+    width:100vw;
+    height:100vh;
+    object-fit:cover;
+}
+
+/* UI */
+#ui {
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    z-index:9999;
+}
+
+#overlay {
+    position:absolute;
+    top:20px;
+    left:20px;
+    color:white;
+    background:rgba(0,0,0,0.6);
+    padding:8px 12px;
+    border-radius:6px;
+    transition:.3s;
+}
+
+#logo {
+    position:absolute;
+    top:60px;
+    left:20px;
+    height:50px;
+}
+
+/* botón */
+#loadBtn {
+    position:absolute;
+    top:20px;
+    right:20px;
+    z-index:10000;
+    pointer-events:auto;
+}
+
+/* lista lateral */
+#list {
+    position:absolute;
+    right:0;
+    top:0;
+    width:80px;
+    height:100%;
+    background:rgba(0,0,0,0.8);
+    overflow-y:auto;
+    transform:translateX(0);
+    transition:0.3s;
+    pointer-events:auto;
+}
+
+#list.hidden {
+    transform:translateX(100%);
+}
+
+.channel {
+    display:flex;
+    justify-content:center;
+    padding:10px;
+    cursor:pointer;
+}
+
+.channel img {
+    height:40px;
+    max-width:60px;
+}
+
+.channel.active {
+    background:rgba(255,255,255,0.2);
+}
+</style>
+</head>
+
+<body>
+
+<button id="loadBtn">Cargar lista</button>
+<input type="file" id="fileInput" accept=".m3u" hidden>
+
+<video id="videoA" muted playsinline></video>
+<video id="videoB" muted playsinline style="display:none"></video>
+
+<div id="ui">
+    <div id="overlay">Esperando lista...</div>
+    <img id="logo" style="display:none">
+    <div id="list"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script>
+// DOM
+const videoA = document.getElementById("videoA");
+const videoB = document.getElementById("videoB");
+
+const loadBtn = document.getElementById("loadBtn");
+const fileInput = document.getElementById("fileInput");
+const overlay = document.getElementById("overlay");
+const list = document.getElementById("list");
+const logo = document.getElementById("logo");
+
+// videos activos
+let activeVideo = videoA;
+let standbyVideo = videoB;
+
+let hlsActive = null;
+let hlsPreload = null;
+
+// data
+let channels = [];
+let current = 0;
+let preloadIndex = null;
+
+// memoria
+let hasPlayed = false;
+let direction = 1;
+let triedChannels = new Set();
+
+// botón cargar lista
+loadBtn.onclick = () => fileInput.click();
+
+fileInput.onchange = e => {
+    let file = e.target.files[0];
+    if(!file) return;
+
+    let reader = new FileReader();
+    reader.onload = e => {
+        channels = [];
+        parseM3U(e.target.result);
+
+        if(!channels.length) return alert("Lista vacía");
+
+        buildList();
+        loadBtn.style.display = "none";
+        overlay.innerText = "";
+
+        let saved = localStorage.getItem("lastChannel");
+        if(saved !== null) current = parseInt(saved);
+
+        loadChannel(current);
+    };
+    reader.readAsText(file);
+};
+
+// parse M3U
+function parseM3U(txt){
+    let lines = txt.split("\n");
+    for(let i=0;i<lines.length;i++){
+        let l = lines[i].trim();
+        if(l.startsWith("#EXTINF")){
+            let name = l.split(",").pop().trim();
+            let url = (lines[i+1]||"").trim();
+            let logo = (l.match(/tvg-logo="([^"]+)"/)||[])[1];
+            if(url.startsWith("http")){
+                channels.push({name,url,logo});
+            }
+        }
+    }
+}
+
+// construir lista de logos
+function buildList(){
+    list.innerHTML = "";
+    channels.forEach((ch,i)=>{
+        let d = document.createElement("div");
+        d.className = "channel";
+        d.onclick = ()=>loadChannel(i,true);
+
+        if(ch.logo){
+            let img = document.createElement("img");
+            img.src = ch.logo;
+            d.appendChild(img);
+        }
+        list.appendChild(d);
+    });
+}
+
+// precarga canal
+function preloadChannel(index){
+    if(index < 0) index = channels.length - 1;
+    if(index >= channels.length) index = 0;
+    
+    if(preloadIndex === index) return;
+    preloadIndex = index;
+    
+    if(hlsPreload) hlsPreload.destroy();
+
+    let ch = channels[index];
+    
+    hlsPreload = new Hls({
+        maxBufferLength: 10,
+        maxMaxBufferLength: 20
+    });
+    
+    hlsPreload.loadSource(ch.url);
+    hlsPreload.attachMedia(standbyVideo);
+    
+    standbyVideo.muted = true;
+    
+    console.log("⚡ Precargando:", ch.name);
+}
+
+// cargar canal
+function loadChannel(index, isUser=false){
+    hasPlayed = false;
+    triedChannels.clear();
+    
+    if(index < 0) index = channels.length - 1;
+    if(index >= channels.length) index = 0;
+
+    current = index;
+    localStorage.setItem("lastChannel", current);
+
+    let ch = channels[index];
+    updateUI();
+
+    // usar precarga si ya estaba cargado
+    if(preloadIndex === index && hlsPreload){
+        console.log("🚀 usando precarga");
+        
+        if(hlsActive) hlsActive.destroy();
+        
+        hlsActive = hlsPreload;
+        hlsPreload = null;
+        preloadIndex = null;
+        
+        swapVideos();
+        
+        activeVideo.muted = false;
+        activeVideo.play().catch(()=>{});
+        
+        // precargar siguiente
+        preloadChannel(current + direction);
+        return;
+    }
+
+    if(hlsActive) hlsActive.destroy();
+    
+    hlsActive = new Hls({
+        maxBufferLength: 10,
+        maxMaxBufferLength: 20 
+    });
+    
+    hlsActive.loadSource(ch.url);
+    hlsActive.attachMedia(activeVideo);
+
+    hlsActive.on(Hls.Events.MANIFEST_PARSED, ()=>{
+        hasPlayed = true;
+        triedChannels.clear();
+        
+        activeVideo.muted = false;
+        activeVideo.play().catch(()=>{});
+            
+        // precargar siguiente
+        preloadChannel(current + direction);
+    });
+
+    hlsActive.on(Hls.Events.ERROR,(event,data)=>{
+        if(data.fatal){
+            failover();
+        }
+    });
+}
+
+// failover
+function failover(){
+    if(hasPlayed) return;
+
+    triedChannels.add(current);
+    
+    if(triedChannels.size >= channels.length){
+        console.warn("Todos los canales fallaron");
+        return;
+    }
+
+    let next = current;
+    
+    do{
+        next += direction;
+        
+        if(next < 0) next = channels.length - 1;
+        if(next >= channels.length) next = 0;
+        
+    } while(triedChannels.has(next));
+
+    loadChannel(next,false);
+}
+
+// swap videos
+function swapVideos(){
+    activeVideo.style.display = "none";
+    standbyVideo.style.display = "block";
+
+    [activeVideo, standbyVideo] = [standbyVideo, activeVideo];
+}
+
+// actualizar UI
+function updateUI(){
+    let ch = channels[current];
+    if(ch.logo){
+        logo.src = ch.logo;
+        logo.style.display = "block";
+    }
+    document.querySelectorAll(".channel").forEach((el,i)=>{
+        el.classList.toggle("active",i===current);
+    });
+}
+
+// controles teclado
+document.addEventListener("keydown", e=>{
+    if(e.key==="ArrowUp"){ direction=-1; loadChannel(current-1,true); }
+    if(e.key==="ArrowDown"){ direction=1; loadChannel(current+1,true); }
+    if(e.key==="ArrowLeft") list.classList.remove("hidden");
+    if(e.key==="ArrowRight") list.classList.add("hidden");
+    if(e.key==="f") toggleFullscreen();
+});
+
+// fullscreen
+function toggleFullscreen(){
+    if(!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+}
+document.addEventListener("dblclick",toggleFullscreen);
+
+// gestos táctiles
+let startX=0, startY=0;
+document.addEventListener("touchstart",e=>{
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+});
+document.addEventListener("touchend",e=>{
+    let dx = e.changedTouches[0].clientX - startX;
+    let dy = e.changedTouches[0].clientY - startY;
+
+    if(Math.abs(dy) > 50 && Math.abs(dy) > Math.abs(dx)){
+        if(dy < 0){ direction=1; loadChannel(current+1,true); }
+        else { direction=-1; loadChannel(current-1,true); }
+    }
+    if(Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)){
+        if(dx < 0) list.classList.add("hidden");
+        else list.classList.remove("hidden");
+    }
+});
+</script>
+
+</body>
+</html>
