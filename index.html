@@ -213,10 +213,7 @@ function preloadChannel(index){
 }
 
 // cargar canal
-function loadChannel(index, isUser=false){
-    hasPlayed = false;
-    triedChannels.clear();
-    
+function loadChannel(index, isUser=false){ 
     if(index < 0) index = channels.length - 1;
     if(index >= channels.length) index = 0;
 
@@ -257,8 +254,6 @@ function loadChannel(index, isUser=false){
     hlsActive.attachMedia(activeVideo);
 
     hlsActive.on(Hls.Events.MANIFEST_PARSED, ()=>{
-        hasPlayed = true;
-        triedChannels.clear();
         
         activeVideo.muted = false;
         activeVideo.play().catch(()=>{});
