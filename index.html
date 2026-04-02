@@ -323,8 +323,17 @@ function preloadChannel(index){
     let ch = channels[index];
 
     hlsPreload = new Hls({
-        maxBufferLength: 10,
-        maxMaxBufferLength: 30
+        maxBufferLength: 20,
+        maxMaxBufferLength: 30,
+
+        manifestLoadingTimeOut: 20000,
+        manifestLoadingMaxRetry: 3,
+
+        levelLoadingTimeOut: 20000,
+        levelLoadingMaxRetry: 3,
+
+        fragLoadingTimeOut: 20000,
+        fragLoadingMaxRetry: 4
     });
 
     hlsPreload.loadSource(ch.url);
@@ -370,8 +379,17 @@ function loadChannel(index){
     if(hlsActive) hlsActive.destroy();
 
     hlsActive = new Hls({
-        maxBufferLength: 5,
-        maxMaxBufferLength: 10
+        maxBufferLength: 20,
+        maxMaxBufferLength: 30,
+
+        manifestLoadingTimeOut: 20000,
+        manifestLoadingMaxRetry: 3,
+
+        levelLoadingTimeOut: 20000,
+        levelLoadingMaxRetry: 3,
+
+        fragLoadingTimeOut: 20000,
+        fragLoadingMaxRetry: 4
     });
 
     hlsActive.loadSource(ch.url);
@@ -385,7 +403,10 @@ function loadChannel(index){
     });
 
     hlsActive.on(Hls.Events.ERROR,(event,data)=>{
-        if(data.fatal) failover();
+        if(data.fatal){
+            console.warn("Error, reintentando...");
+            failover();
+        }
     });
 }
 
