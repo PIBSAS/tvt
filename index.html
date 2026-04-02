@@ -23,12 +23,15 @@ video {
 
 #overlay {
     position:absolute;
-    top:20px;
-    left:20px;
+    top:50%;
+    left:50%;
+    transform:translate(-50%, -50%);
     color:white;
     background:rgba(0,0,0,0.6);
-    padding:8px 12px;
-    border-radius:6px;
+    padding:12px 18px;
+    border-radius:8px;
+    font-size:20px;
+    text-align:center;
     transition:.3s;
 }
 
@@ -146,6 +149,7 @@ video {
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <script>
 
+// DOM
 const videoA = document.getElementById("videoA");
 const videoB = document.getElementById("videoB");
 
@@ -162,18 +166,32 @@ const overlay = document.getElementById("overlay");
 const list = document.getElementById("list");
 const logo = document.getElementById("logo");
 
+// videos
 let activeVideo = videoA;
 let standbyVideo = videoB;
 
 let hlsActive = null;
 let hlsPreload = null;
 
+// data
 let channels = [];
 let current = 0;
 let preloadIndex = null;
 
+// control
 let direction = 1;
 let triedChannels = new Set();
+
+let numberBuffer = "";
+let numberTimer = null;
+
+function showNumberInput(){
+    overlay.innerText = "Canal: " + numberBuffer;
+}
+
+// =======================
+// HISTORIAL URL
+// =======================
 
 function saveUrlHistory(url){
     let history = JSON.parse(localStorage.getItem("urlHistory") || "[]");
@@ -201,8 +219,10 @@ urlHistory.onchange = () => {
     urlInput.value = urlHistory.value;
 };
 
+// cargar historial al inicio
 loadUrlHistory();
 
+// botón cargar
 loadBtn.onclick = () => fileInput.click();
 
 fileInput.onchange = e => {
@@ -271,6 +291,7 @@ loadUrlBtn.onclick = async () => {
     }
 };
 
+// parse M3U
 function parseM3U(txt){
     let lines = txt.split("\n");
     for(let i=0;i<lines.length;i++){
@@ -286,6 +307,7 @@ function parseM3U(txt){
     }
 }
 
+// lista
 function buildList(){
     list.innerHTML = "";
     channels.forEach((ch,i)=>{
@@ -302,6 +324,7 @@ function buildList(){
     });
 }
 
+// PRELOAD REAL (🔥 clave)
 function preloadChannel(index){
     if(index < 0) index = channels.length - 1;
     if(index >= channels.length) index = 0;
@@ -322,10 +345,12 @@ function preloadChannel(index){
     hlsPreload.attachMedia(standbyVideo);
 
     standbyVideo.muted = true;
-    standbyVideo.play().catch(()=>{});
+    standbyVideo.play().catch(()=>{}); // 🔥 ESTO HACE LA MAGIA
 
+    console.log("⚡ Precargando:", ch.name);
 }
 
+// LOAD rápido
 function loadChannel(index){
     if(index < 0) index = channels.length - 1;
     if(index >= channels.length) index = 0;
@@ -337,7 +362,9 @@ function loadChannel(index){
     overlay.innerText = ch.name;
     updateUI();
 
+    // USAR PRELOAD
     if(preloadIndex === index && hlsPreload){
+        console.log("🚀 usando precarga");
 
         if(hlsActive) hlsActive.destroy();
 
@@ -354,7 +381,7 @@ function loadChannel(index){
         return;
     }
 
-
+    // NORMAL
     if(hlsActive) hlsActive.destroy();
 
     hlsActive = new Hls({
@@ -377,11 +404,12 @@ function loadChannel(index){
     });
 }
 
+// FAILOVER
 function failover(){
     triedChannels.add(current);
 
     if(triedChannels.size >= channels.length){
-
+        console.warn("Sin señal");
         return;
     }
 
@@ -396,11 +424,15 @@ function failover(){
     loadChannel(next);
 }
 
+// swap
 function swapVideos(){
     activeVideo.style.display = "none";
     standbyVideo.style.display = "block";
     [activeVideo, standbyVideo] = [standbyVideo, activeVideo];
 }
+
+// UI
+let overlayTimer;
 
 function updateUI(){
     let ch = channels[current];
@@ -413,6 +445,16 @@ function updateUI(){
     document.querySelectorAll(".channel").forEach((el,i)=>{
         el.classList.toggle("active",i===current);
     });
+    // 📺 mostrar nombre en el centro
+    overlay.innerText = (current + 1) + " - " + ch.name;
+
+    // 🔥 mostrar + fade
+    overlay.style.opacity = "1";
+
+    clearTimeout(overlayTimer);
+    overlayTimer = setTimeout(()=>{
+        overlay.style.opacity = "0";
+    }, 2000);
 }
 
 function showList(){
@@ -423,10 +465,12 @@ function hideList(){
     list.style.display = "none";
 }
 
+// teclado
 document.addEventListener("keydown", e=>{
     if(e.key==="ArrowUp"){ direction=-1; loadChannel(current-1); }
     if(e.key==="ArrowDown"){ direction=1; loadChannel(current+1); }
     
+    // 👉 mostrar / ocultar lista
     if(e.key==="ArrowRight"){
         hideList();
     }
@@ -435,9 +479,39 @@ document.addEventListener("keydown", e=>{
         showList();
     }
     
+    // 🎯 entrada numérica
+    if(e.key >= "0" && e.key <= "9"){
+
+        numberBuffer += e.key;
+
+        showNumberInput();
+
+        clearTimeout(numberTimer);
+
+        numberTimer = setTimeout(()=>{
+            let num = parseInt(numberBuffer);
+
+            if(!isNaN(num)){
+                // opcional: -1 si querés que 1 sea canal 1
+                let index = num - 1;
+
+                if(index >= 0 && index < channels.length){
+                    loadChannel(index);
+                }
+            }
+
+            numberBuffer = "";
+        }, 1000);
+    }
+
     if(e.key==="f") toggleFullscreen();
     if(e.key==="Escape") document.exitFullscreen();
 });
+
+
+// =======================
+// GESTOS TÁCTILES PRO
+// =======================
 
 let startX = 0;
 let startY = 0;
@@ -447,19 +521,20 @@ let isChannelGesture = false;
 
 let startVolume = 1;
 
-
+// TOUCH START
 document.addEventListener("touchstart", e=>{
     const touch = e.touches[0];
 
     startX = touch.clientX;
     startY = touch.clientY;
 
+    // derecha = canal
     if(startX < window.innerWidth * 0.6){
         isVolumeGesture = true;
         isChannelGesture = false;
         startVolume = activeVideo.volume;
     }
-    
+    // izquierda = volumen
     else if(startX > window.innerWidth * 0.4){
         isChannelGesture = true;
         isVolumeGesture = false;
@@ -470,6 +545,8 @@ document.addEventListener("touchstart", e=>{
     }
 });
 
+
+// TOUCH MOVE
 document.addEventListener("touchmove", e=>{
     if(isVolumeGesture || isChannelGesture){
         e.preventDefault();
@@ -480,6 +557,7 @@ document.addEventListener("touchmove", e=>{
     let dx = touch.clientX - startX;
     let dy = touch.clientY - startY;
 
+    // 🔊 VOLUMEN (lado izquierdo)
     if(isVolumeGesture){
         let delta = startY - touch.clientY;
         let change = delta / 300;
@@ -491,6 +569,7 @@ document.addEventListener("touchmove", e=>{
         showVolume(newVolume);
     }
 
+    // ⬆️⬇️ CANALES (lado derecho)
     if(isChannelGesture){
         if(Math.abs(dy) > 60 && Math.abs(dy) > Math.abs(dx)){
             
@@ -502,11 +581,13 @@ document.addEventListener("touchmove", e=>{
                 loadChannel(current - 1);
             }
 
-            isChannelGesture = false;
+            isChannelGesture = false; // evita múltiples disparos
         }
     }
 });
 
+
+// TOUCH END (gestos generales)
 let lastTap = 0;
 
 document.addEventListener("touchend", e=>{
@@ -517,6 +598,7 @@ document.addEventListener("touchend", e=>{
 
     let now = Date.now();
 
+    // 👉 swipe horizontal = menú
     if(Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)){
         if(dx < 0){
             hideList();
@@ -525,6 +607,7 @@ document.addEventListener("touchend", e=>{
         }
     }
 
+    // 👉 doble tap = fullscreen
     if(Math.abs(dx) < 10 && Math.abs(dy) < 10){
         if(now - lastTap < 300){
             toggleFullscreen();
@@ -541,7 +624,7 @@ function toggleFullscreen(){
         const el = document.documentElement;
 
         if(el.requestFullscreen) el.requestFullscreen();
-        else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+        else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen(); // iOS
     } else {
         if(document.exitFullscreen) document.exitFullscreen();
         else if(document.webkitExitFullscreen) document.webkitExitFullscreen();
